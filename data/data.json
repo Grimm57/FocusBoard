@@ -1,0 +1,15 @@
+{
+  "tasks": [],
+  "focus_sessions": [],
+  "daily_records": {},
+  "last_active_date": "2026-05-02",
+  "session_board": {
+    "focus_task_id": null,
+    "break_task_id": null,
+    "break_label": "休息时间"
+  },
+  "settings": {
+    "work_minutes": 25,
+    "break_minutes": 5
+  }
+}
