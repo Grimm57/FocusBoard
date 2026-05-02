@@ -2,3 +2,7 @@ data/data.json
 __pycache__/
 *.pyc
 .claude/
+dist/
+build/
+*.spec
+.claude/
