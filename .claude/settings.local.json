@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python *)",
       "Bash(git init *)",
-      "Bash(git remote *)"
+      "Bash(git remote *)",
+      "Bash(git branch *)"
     ]
   }
 }
