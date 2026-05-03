@@ -1,18 +1,21 @@
 from datetime import date, datetime, timedelta
 
 
+def _event_day(value):
+    if not value:
+        return None
+    return datetime.fromisoformat(value).date()
+
+
 def today_summary(data, target_date=None):
     today = target_date or datetime.now().date()
     completed_tasks = 0
     focus_minutes = 0
     pomodoro_count = 0
 
-    for task in data.get("tasks", []):
-        completed_at = task.get("completed_at")
-        if task.get("completed") and completed_at:
-            completed_day = datetime.fromisoformat(completed_at).date()
-            if completed_day == today:
-                completed_tasks += 1
+    for event in data.get("task_completion_events", []):
+        if _event_day(event.get("completed_at")) == today:
+            completed_tasks += 1
 
     for session in data.get("focus_sessions", []):
         ended_at = session.get("ended_at")
@@ -90,3 +93,19 @@ def recent_daily_records(data, days=7):
         )
 
     return items
+
+
+def task_session_counts(data):
+    counts = {}
+
+    for session in data.get("focus_sessions", []):
+        task_id = session.get("task_id")
+        if not task_id:
+            continue
+        entry = counts.setdefault(task_id, {"work_sessions": 0, "break_sessions": 0})
+        if session.get("mode") == "work":
+            entry["work_sessions"] += 1
+        elif session.get("mode") == "break":
+            entry["break_sessions"] += 1
+
+    return counts

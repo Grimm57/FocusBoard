@@ -4,7 +4,7 @@ from tkinter import messagebox, ttk
 from uuid import uuid4
 
 from pomodoro import PomodoroTimer
-from stats import build_daily_record, historical_summary, recent_daily_records, today_summary
+from stats import build_daily_record, historical_summary, recent_daily_records, task_session_counts, today_summary
 from storage import Storage
 
 
@@ -44,7 +44,6 @@ class TaskBoardApp:
         self.total_pomodoro_count_var = tk.StringVar()
 
         self.selected_task_id = None
-        self.task_vars = {}
 
         self._build_ui()
         self._bind_mousewheel()
@@ -109,7 +108,7 @@ class TaskBoardApp:
 
         header_row = tk.Frame(card, bg="#ffffff")
         header_row.pack(fill="x")
-        ttk.Label(header_row, text="今日任务", style="Section.TLabel").pack(side="left")
+        ttk.Label(header_row, text="任务列表", style="Section.TLabel").pack(side="left")
 
         action_row = tk.Frame(card, bg="#ffffff")
         action_row.pack(fill="x", pady=(10, 0))
@@ -128,12 +127,9 @@ class TaskBoardApp:
 
         ttk.Button(input_row, text="添加", command=self.add_task, style="Primary.TButton").pack(side="left", padx=(8, 0))
 
+        ttk.Label(card, text="点击任务可选中，再放入专注槽位或休息槽位。", style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
         self.pending_tasks_frame = tk.Frame(card, bg="#ffffff")
         self.pending_tasks_frame.pack(fill="x")
-
-        ttk.Label(card, text="已完成", style="Muted.TLabel").pack(anchor="w", pady=(12, 6))
-        self.completed_tasks_frame = tk.Frame(card, bg="#ffffff")
-        self.completed_tasks_frame.pack(fill="x")
 
     def _build_timer_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
@@ -178,10 +174,10 @@ class TaskBoardApp:
         grid = tk.Frame(card, bg="#ffffff")
         grid.pack(fill="x", pady=(12, 0))
 
-        self._build_stat_tile(grid, "完成任务", self.completed_tasks_var, 0, 0)
+        self._build_stat_tile(grid, "完成次数", self.completed_tasks_var, 0, 0)
         self._build_stat_tile(grid, "专注时长", self.focus_minutes_var, 0, 1)
         self._build_stat_tile(grid, "完成番茄", self.pomodoro_count_var, 1, 0)
-        self._build_stat_tile(grid, "累计任务", self.total_completed_tasks_var, 1, 1)
+        self._build_stat_tile(grid, "累计完成", self.total_completed_tasks_var, 1, 1)
 
     def _build_history_card(self, parent):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
@@ -198,7 +194,7 @@ class TaskBoardApp:
         table_header = tk.Frame(card, bg="#f8fafc", padx=10, pady=8)
         table_header.pack(fill="x")
         tk.Label(table_header, text="日期", font=("Microsoft YaHei UI", 9, "bold"), bg="#f8fafc", fg="#475569").grid(row=0, column=0, sticky="w")
-        tk.Label(table_header, text="任务", font=("Microsoft YaHei UI", 9, "bold"), bg="#f8fafc", fg="#475569").grid(row=0, column=1, sticky="w", padx=(24, 0))
+        tk.Label(table_header, text="完成", font=("Microsoft YaHei UI", 9, "bold"), bg="#f8fafc", fg="#475569").grid(row=0, column=1, sticky="w", padx=(24, 0))
         tk.Label(table_header, text="专注", font=("Microsoft YaHei UI", 9, "bold"), bg="#f8fafc", fg="#475569").grid(row=0, column=2, sticky="w", padx=(24, 0))
 
         self.history_frame = tk.Frame(card, bg="#ffffff")
@@ -234,6 +230,8 @@ class TaskBoardApp:
             "completed": False,
             "created_at": datetime.now().isoformat(),
             "completed_at": None,
+            "completion_count": 0,
+            "last_completed_at": None,
         }
         self.data["tasks"].append(task)
         self.task_title_var.set("")
@@ -255,7 +253,7 @@ class TaskBoardApp:
             return
 
         task = self._find_task(self.selected_task_id)
-        if not task or task.get("completed"):
+        if not task:
             messagebox.showinfo("提示", "这个任务当前不能放入槽位。")
             return
 
@@ -268,14 +266,23 @@ class TaskBoardApp:
         self.data["session_board"][key] = self.selected_task_id
         self._save_and_refresh()
 
-    def toggle_task(self, task_id):
-        for task in self.data["tasks"]:
-            if task["id"] != task_id:
-                continue
-            task["completed"] = not task["completed"]
-            task["completed_at"] = datetime.now().isoformat() if task["completed"] else None
-            break
-        self._cleanup_slot_tasks_if_needed()
+    def complete_task_once(self, task_id):
+        task = self._find_task(task_id)
+        if not task:
+            return
+
+        completed_at = datetime.now().isoformat()
+        task["completion_count"] = int(task.get("completion_count", 0)) + 1
+        task["last_completed_at"] = completed_at
+        task["completed"] = False
+        task["completed_at"] = completed_at
+        self.data["task_completion_events"].append(
+            {
+                "task_id": task_id,
+                "task_type": task.get("task_type", "focus"),
+                "completed_at": completed_at,
+            }
+        )
         self._save_and_refresh()
 
     def delete_task(self, task_id):
@@ -288,51 +295,50 @@ class TaskBoardApp:
     def refresh_task_list(self):
         for frame in list(self.pending_tasks_frame.winfo_children()):
             frame.destroy()
-        for frame in list(self.completed_tasks_frame.winfo_children()):
-            frame.destroy()
 
-        pending_tasks = [task for task in self.data["tasks"] if not task["completed"]]
-        completed_tasks = [task for task in self.data["tasks"] if task["completed"]]
-
-        if not pending_tasks:
+        tasks = self.data.get("tasks", [])
+        if not tasks:
             ttk.Label(self.pending_tasks_frame, text="还没有任务，先加一个吧。", style="Muted.TLabel").pack(anchor="w", pady=4)
-        else:
-            for task in pending_tasks:
-                self._render_task(self.pending_tasks_frame, task)
+            return
 
-        if not completed_tasks:
-            ttk.Label(self.completed_tasks_frame, text="今天还没有完成的任务。", style="Muted.TLabel").pack(anchor="w", pady=4)
-        else:
-            for task in completed_tasks:
-                self._render_task(self.completed_tasks_frame, task)
+        for task in tasks:
+            self._render_task(self.pending_tasks_frame, task)
 
     def _render_task(self, parent, task):
+        session_counts = task_session_counts(self.data).get(task["id"], {"work_sessions": 0, "break_sessions": 0})
         is_selected = task["id"] == self.selected_task_id
         is_focus_task = task["id"] == self.data["session_board"].get("focus_task_id")
         is_break_task = task["id"] == self.data["session_board"].get("break_task_id")
-        row_bg = "#ede9fe" if is_selected else "#f8fafc" if task["completed"] else "#ffffff"
-        row = tk.Frame(parent, bg=row_bg, padx=8, pady=8, highlightthickness=1, highlightbackground="#c4b5fd" if is_selected else row_bg)
+        row_bg = "#ede9fe" if is_selected else "#ffffff"
+        row = tk.Frame(parent, bg=row_bg, padx=8, pady=8, highlightthickness=1, highlightbackground="#c4b5fd" if is_selected else "#e5e7eb")
         row.pack(fill="x", pady=4)
         row.bind("<Button-1>", lambda event, task_id=task["id"]: self.select_task(task_id))
 
-        task_var = tk.BooleanVar(value=task["completed"])
-        self.task_vars[task["id"]] = task_var
-
-        ttk.Checkbutton(row, variable=task_var, command=lambda task_id=task["id"]: self.toggle_task(task_id)).pack(side="left")
-
         content = tk.Frame(row, bg=row_bg)
-        content.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        content.pack(side="left", fill="x", expand=True)
         content.bind("<Button-1>", lambda event, task_id=task["id"]: self.select_task(task_id))
 
-        color = "#94a3b8" if task["completed"] else "#111827"
         label_prefix = "[休息] " if task.get("task_type") == "break" else "[专注] "
-        tk.Label(content, text=f"{label_prefix}{task['title']}", font=("Microsoft YaHei UI", 11), bg=row_bg, fg=color, anchor="w").pack(anchor="w")
-        if is_focus_task and not task["completed"]:
+        tk.Label(content, text=f"{label_prefix}{task['title']}", font=("Microsoft YaHei UI", 11), bg=row_bg, fg="#111827", anchor="w").pack(anchor="w")
+
+        status_parts = [f"完成 {int(task.get('completion_count', 0))} 次"]
+        if session_counts["work_sessions"]:
+            status_parts.append(f"专注 {session_counts['work_sessions']} 次")
+        if session_counts["break_sessions"]:
+            status_parts.append(f"休息 {session_counts['break_sessions']} 次")
+        if task.get("last_completed_at"):
+            status_parts.append(f"最近完成 {datetime.fromisoformat(task['last_completed_at']).strftime('%H:%M')}")
+        tk.Label(content, text=" · ".join(status_parts), font=("Microsoft YaHei UI", 9), bg=row_bg, fg="#64748b", anchor="w").pack(anchor="w", pady=(4, 0))
+
+        if is_focus_task:
             tk.Label(content, text="当前专注中", font=("Microsoft YaHei UI", 9), bg=row_bg, fg="#7c3aed", anchor="w").pack(anchor="w", pady=(2, 0))
-        if is_break_task and not task["completed"]:
+        if is_break_task:
             tk.Label(content, text="当前休息任务", font=("Microsoft YaHei UI", 9), bg=row_bg, fg="#0284c7", anchor="w").pack(anchor="w", pady=(2, 0))
 
-        ttk.Button(row, text="删除", width=6, style="Ghost.TButton", command=lambda task_id=task["id"]: self.delete_task(task_id)).pack(side="right")
+        actions = tk.Frame(row, bg=row_bg)
+        actions.pack(side="right")
+        ttk.Button(actions, text="完成一次", width=8, style="Primary.TButton", command=lambda task_id=task["id"]: self.complete_task_once(task_id)).pack(side="left")
+        ttk.Button(actions, text="删除", width=6, style="Ghost.TButton", command=lambda task_id=task["id"]: self.delete_task(task_id)).pack(side="left", padx=(6, 0))
 
     def start_timer(self):
         focus_task = self._current_slot_task("focus_task_id")
@@ -371,10 +377,12 @@ class TaskBoardApp:
 
     def _schedule_tick(self):
         result = self.timer.tick()
-        if result and result["completed_mode"] == "work":
+        if result:
+            task_key = "focus_task_id" if result["completed_mode"] == "work" else "break_task_id"
             self.data["focus_sessions"].append(
                 {
-                    "mode": "work",
+                    "mode": result["completed_mode"],
+                    "task_id": self.data["session_board"].get(task_key),
                     "started_at": result["started_at"].isoformat() if result["started_at"] else None,
                     "ended_at": result["ended_at"].isoformat(),
                     "duration_minutes": result["duration_minutes"],
@@ -384,10 +392,11 @@ class TaskBoardApp:
             self.refresh_stats()
             self.refresh_history()
             self.refresh_slots()
-            messagebox.showinfo("专注完成", "本轮番茄专注已完成，开始休息吧。")
-        elif result and result["completed_mode"] == "break":
-            self.refresh_slots()
-            messagebox.showinfo("休息结束", "休息时间结束，可以开始下一轮专注了。")
+            self.refresh_task_list()
+            if result["completed_mode"] == "work":
+                messagebox.showinfo("专注完成", "本轮番茄专注已完成，开始休息吧。")
+            else:
+                messagebox.showinfo("休息结束", "休息时间结束，可以开始下一轮专注了。")
 
         self._update_timer_display()
         self.root.after(1000, self._schedule_tick)
@@ -432,10 +441,10 @@ class TaskBoardApp:
     def refresh_stats(self):
         summary = today_summary(self.data)
         totals = historical_summary(self.data)
-        self.completed_tasks_var.set(f"{summary['completed_tasks']} 个")
+        self.completed_tasks_var.set(f"{summary['completed_tasks']} 次")
         self.focus_minutes_var.set(f"{summary['focus_minutes']} 分钟")
         self.pomodoro_count_var.set(f"{summary['pomodoro_count']} 次")
-        self.total_completed_tasks_var.set(f"{totals['total_completed_tasks']} 个")
+        self.total_completed_tasks_var.set(f"{totals['total_completed_tasks']} 次")
         self.total_focus_minutes_var.set(f"{totals['total_focus_minutes']} 分钟")
         self.total_pomodoro_count_var.set(f"{totals['total_pomodoro_count']} 次")
 
@@ -447,7 +456,7 @@ class TaskBoardApp:
             row = tk.Frame(self.history_frame, bg="#ffffff", padx=10, pady=8)
             row.pack(fill="x")
             tk.Label(row, text=item["label"], font=("Microsoft YaHei UI", 10), bg="#ffffff", fg="#111827", width=8, anchor="w").grid(row=0, column=0, sticky="w")
-            tk.Label(row, text=f"{item['completed_tasks']} 个", font=("Microsoft YaHei UI", 10), bg="#ffffff", fg="#334155", width=10, anchor="w").grid(row=0, column=1, sticky="w", padx=(16, 0))
+            tk.Label(row, text=f"{item['completed_tasks']} 次", font=("Microsoft YaHei UI", 10), bg="#ffffff", fg="#334155", width=10, anchor="w").grid(row=0, column=1, sticky="w", padx=(16, 0))
             tk.Label(row, text=f"{item['focus_minutes']} 分钟", font=("Microsoft YaHei UI", 10), bg="#ffffff", fg="#334155", width=12, anchor="w").grid(row=0, column=2, sticky="w", padx=(16, 0))
 
     def _rollover_day_if_needed(self):
@@ -464,7 +473,6 @@ class TaskBoardApp:
             self.data["daily_records"][day_key] = build_daily_record(self.data, previous_day)
             previous_day += timedelta(days=1)
 
-        self.data["tasks"] = [task for task in self.data["tasks"] if not task.get("completed")]
         self._cleanup_slot_tasks_if_needed()
         self.data["last_active_date"] = today
         self.storage.save(self.data)
@@ -494,10 +502,7 @@ class TaskBoardApp:
         task_id = self.data["session_board"].get(key)
         if not task_id:
             return None
-        task = self._find_task(task_id)
-        if task and not task.get("completed"):
-            return task
-        return None
+        return self._find_task(task_id)
 
     def _cleanup_slot_tasks_if_needed(self):
         if self._current_slot_task("focus_task_id") is None:
@@ -506,10 +511,28 @@ class TaskBoardApp:
             self.data["session_board"]["break_task_id"] = None
 
     def _ensure_task_defaults(self):
+        migrated_events = list(self.data.get("task_completion_events", []))
         for task in self.data.get("tasks", []):
             task.setdefault("task_type", "focus")
+            task.setdefault("completion_count", 0)
+            task.setdefault("last_completed_at", None)
+            if task.get("completed") and task.get("completed_at"):
+                task["completion_count"] = max(int(task.get("completion_count", 0)), 1)
+                task["last_completed_at"] = task.get("completed_at")
+                if not any(event.get("task_id") == task["id"] and event.get("completed_at") == task.get("completed_at") for event in migrated_events):
+                    migrated_events.append(
+                        {
+                            "task_id": task["id"],
+                            "task_type": task.get("task_type", "focus"),
+                            "completed_at": task.get("completed_at"),
+                        }
+                    )
+                task["completed"] = False
+        self.data["task_completion_events"] = migrated_events
         self.data["session_board"].setdefault("focus_task_id", None)
         self.data["session_board"].setdefault("break_task_id", None)
+        for session in self.data.get("focus_sessions", []):
+            session.setdefault("task_id", None)
 
     def _on_content_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
