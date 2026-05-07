@@ -24,7 +24,7 @@ DEFAULT_DATA = {
     "daily_records": {},
     "last_active_date": date.today().isoformat(),
     "session_board": {"focus_task_id": None, "break_task_id": None, "break_label": "休息时间"},
-    "settings": {"work_minutes": 25, "break_minutes": 5},
+    "settings": {"work_minutes": 25, "break_minutes": 5, "theme": "light"},
 }
 
 

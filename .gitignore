@@ -6,3 +6,4 @@ dist/
 build/
 *.spec
 .claude/
+__pycache__/

@@ -38,6 +38,16 @@ class PomodoroTimer:
         self.remaining_seconds = self.break_minutes * 60
         self.session_started_at = None
 
+    def update_durations(self, work_minutes, break_minutes):
+        self.work_minutes = work_minutes
+        self.break_minutes = break_minutes
+        self.is_running = False
+        self.session_started_at = None
+        if self.mode == "work":
+            self.remaining_seconds = self.work_minutes * 60
+        else:
+            self.remaining_seconds = self.break_minutes * 60
+
     def tick(self):
         if not self.is_running:
             return None
